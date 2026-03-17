@@ -347,7 +347,7 @@ async function askClaude(content, isSpot = false) {
   }
 
   try {
-    startSpinner('listening');
+    startSpinner('starting tx');
     let reply = '';
 
     // Tool-use loop — keeps going until Claude stops calling tools
@@ -377,7 +377,7 @@ async function askClaude(content, isSpot = false) {
         }
 
         messages.push({ role: 'user', content: toolResults });
-        startSpinner('listening');
+        startSpinner('starting tx');
 
       } else {
         reply = msg.content.find(b => b.type === 'text')?.text ?? '';
