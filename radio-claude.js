@@ -681,7 +681,7 @@ async function fetchISSPosition() {
 async function checkISS() {
   if (issObsLat === null) return;
   const pos = await fetchISSPosition();
-  if (!pos) { issTimer = setTimeout(checkISS, 60_000); return; }
+  if (!pos) { setTimeout(checkISS, 60_000); return; }
 
   const elev = calcElevation(issObsLat, issObsLon, pos.lat, pos.lon, pos.alt);
   const az   = calcAzimuth(issObsLat, issObsLon, pos.lat, pos.lon);
