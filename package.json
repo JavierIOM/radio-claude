@@ -1,6 +1,6 @@
 {
   "name": "radio-claude",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "DX cluster monitor with AI commentary for 2D0PEY",
   "main": "radio-claude.js",
   "bin": "radio-claude.js",
