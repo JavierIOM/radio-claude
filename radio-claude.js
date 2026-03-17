@@ -293,25 +293,32 @@ async function askClaude(content, isSpot = false) {
   busy = true;
   history.push({ role: 'user', content });
 
-  try {
-    process.stdout.write('\r\x1b[K');
-    process.stdout.write(`${C.yellow}[Radio Claude]${C.reset} `);
+  // Animate a thinking indicator while waiting for the full response
+  let dots = 0;
+  const spinner = setInterval(() => {
+    dots = (dots % 3) + 1;
+    process.stdout.write(`\r\x1b[K${C.yellow}[Radio Claude]${C.reset} thinking${'.'.repeat(dots)}`);
+  }, 400);
 
-    const stream = client.messages.stream({
+  try {
+    const msg = await client.messages.create({
       model      : MODEL,
       max_tokens : 400,
       system     : SYSTEM,
       messages   : history,
     });
 
-    let reply = '';
-    stream.on('text', t => { process.stdout.write(t); reply += t; });
-    await stream.finalMessage();
+    const reply = msg.content[0]?.text ?? '';
     history.push({ role: 'assistant', content: reply });
-    process.stdout.write('\n\n');
+
+    clearInterval(spinner);
+    process.stdout.write('\r\x1b[K');   // clear thinking line
+    bgPrint(`${C.yellow}[Radio Claude]${C.reset} ${reply}`);
 
   } catch (err) {
-    process.stdout.write(`\n${C.red}[Error]${C.reset} ${err.message}\n\n`);
+    clearInterval(spinner);
+    process.stdout.write('\r\x1b[K');
+    bgPrint(`${C.red}[Error]${C.reset} ${err.message}`);
   } finally {
     busy = false;
     if (rl) rl.prompt(true);
