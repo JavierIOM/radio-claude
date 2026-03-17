@@ -1,0 +1,50 @@
+# Radio Claude — Operator Knowledge Base
+# Lines starting with # are comments. One fact per line.
+# Add new facts with the 'learn' command at the prompt.
+
+## Station
+Callsign is 2D0PEY — Intermediate licence, Isle of Man, 100W maximum power.
+Grid square is IO74RE, located at approximately 54.2°N 4.6°W on the Isle of Man.
+Isle of Man is a Crown Dependency, not part of the UK but uses the same 3-tier licence structure: Foundation=25W, Intermediate=100W, Full=1kW.
+The operator will NOT be upgrading to Full licence — cost and losing the 2D0PEY callsign are the reasons.
+HF rig is an Icom IC-7300 covering HF and 6m.
+VHF/UHF rig is an Icom IC-9700 covering 2m, 70cm, and 23cm (10W on 23cm).
+HF antenna is a Hustler 6-BTV vertical trap antenna covering 10m, 15m, 20m, 30m, 40m, and 75m.
+The Hustler 6-BTV has approximately 36 buried radials, 8-10 metres long. Buried radials do not need to be resonant — they act as a non-resonant ground screen. 36 radials is well into diminishing returns territory.
+2m antenna is a PowAbeam UKAC144-8: 8 element Yagi, 13.2 dBi, 3.4m boom. Designed for central UK UKAC contests — the broad pattern may not be ideal for IoM geography.
+70cm antenna is a PowAbeam UKAC432-15: 15 element Yagi, 16.7 dBi, 28.2 dB F/B ratio, 3.1m boom.
+No 23cm antenna yet — considering the WIMO SHF 2367 (67el, 19.9 dBd, 5m boom).
+
+## Operating style
+Primary modes are FT8 and FT4 for HF digital. Also operates SSB and CW. Does NOT exclusively use digital modes.
+Typically operates at around 70W on HF (below the 100W licence limit).
+20m is the primary DX band — opens well to North America and further in the afternoon/evening.
+40m is good for European contacts in the evening and short-skip to UK/Ireland.
+20m tends to go quiet later in the evening as the long-path to NA closes.
+On a good evening session (16 March 2026): 50 QSOs, 22 DXCC entities confirmed, working Australia and USA easily on 20m FT4 at ~70W.
+
+## DXCC and awards
+VY0ERC (Eureka Amateur Radio Club, Ellesmere Island, 80°N Arctic Canada) is on the watchlist — not yet worked, only spotted us at -29dB SNR on 20m (one-way, no QSO).
+VY0ERC is active ~3 times a year: Feb-Mar, Jul-Aug, Oct-Nov. Active until 1 April 2026 as of March 2026.
+The -29dB VY0ERC spot was from their automated FT8 RX beacon, not a human operator.
+
+## Geography from IO74RE
+North America (east coast USA) is approximately 5,500 km bearing 280° (WNW).
+Australia (VK east coast) is approximately 16,500 km bearing 120° (SE) — long path via 300° (WNW) is sometimes better.
+New Zealand (ZL) is approximately 18,500 km, bearing ~120° (SE).
+Japan (JA) is approximately 9,200 km bearing 55° (NE).
+South Africa (ZS) is approximately 9,500 km bearing 175° (S).
+Brazil (PY) is approximately 8,500 km bearing 230° (SW).
+Arctic Canada / VY0 (Ellesmere Island) is approximately 5,400 km bearing 340° (NNW) — polar path through the auroral zone.
+
+## Personal
+Operator's name is Gavin (also goes by Javier).
+Based on the Isle of Man.
+Partner is Leanne Wilby. Jeanne Kelly is Leanne's mother — NOT Gavin's partner.
+Leanne Wilby works at Games Global (gaming software company).
+Household of 4: Gavin, Leanne, and 2 children.
+
+15m is currently not available — antenna or equipment issues
+2d0pey runs 100w on HF
+I cannot do 160m due to equipment limitations, no need to tell me about them
+Javier is not licensed for 60m

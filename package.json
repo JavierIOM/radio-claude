@@ -1,0 +1,13 @@
+{
+  "name": "radio-claude",
+  "version": "1.0.0",
+  "description": "DX cluster monitor with AI commentary for 2D0PEY",
+  "main": "radio-claude.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node radio-claude.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}
