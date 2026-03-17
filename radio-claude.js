@@ -444,7 +444,7 @@ async function handleSpot(spot) {
     `NEW DX SPOT — ${spot.dx} on ${bandStr}${mode ? ' ' + mode : ''}, spotted by ${spot.spotter}. ` +
     `Comment: "${spot.comment || 'none'}". Time: ${spot.time}.${otaNote}\n` +
     `[LIVE SOLAR DATA]\n${formatSolar(solar)}\n` +
-    `Is this workable from ${MY_GRID} right now? Reference the solar data. Brief (2-3 lines).`;
+    `Is this workable from your location right now? Reference the solar data. Brief (2-3 lines).`;
 
   askClaude(prompt, true);
 }
@@ -581,6 +581,22 @@ function handleCommand(input) {
     }
     return true;
   }
+  if (cmd === 'iss') {
+    if (issObsLat === null) {
+      bgPrint(`${C.yellow}[ISS]${C.reset} Tracking not active — check your grid square in config.json.`);
+      return true;
+    }
+    fetchISSPosition().then(pos => {
+      if (!pos) { bgPrint(`${C.yellow}[ISS]${C.reset} Could not fetch ISS position.`); return; }
+      const elev = calcElevation(issObsLat, issObsLon, pos.lat, pos.lon, pos.alt);
+      const az   = calcAzimuth(issObsLat, issObsLon, pos.lat, pos.lon);
+      bgPrint(
+        `${C.magenta}[ISS]${C.reset} Elevation ${elev.toFixed(1)}°  Azimuth ${az.toFixed(0)}° (${azToCompass(az)})` +
+        `  Alt ${pos.alt.toFixed(0)} km  |  ${elev > 0 ? C.green + 'ABOVE HORIZON' + C.reset : 'below horizon'}`
+      );
+    });
+    return true;
+  }
   if (cmd === 'solar') {
     fetchSolarData().then(s => bgPrint(`${C.cyan}[Solar]${C.reset}\n  ${formatSolar(s).replace(/\n/g, '\n  ')}`));
     return true;
@@ -600,6 +616,7 @@ function handleCommand(input) {
       `  status         — connection + session info\n` +
       `  spot <call> <kHz> [comment] — post a spot to the cluster\n` +
       `  learn <fact>   — save a fact to memory.txt (or just say "remember this: ...")\n` +
+      `  iss            — show current ISS position and elevation\n` +
       `  clear          — clear Radio Claude conversation history\n` +
       `  help           — show this\n` +
       `  Anything else  — chat with Radio Claude`
@@ -609,13 +626,118 @@ function handleCommand(input) {
   return false;
 }
 
+// ─── ISS tracking ────────────────────────────────────────────────────────────
+let issObsLat  = null;
+let issObsLon  = null;
+let issInPass  = false;
+let issMaxElev = -90;
+
+function gridToLatLon(grid) {
+  const g = grid.toUpperCase();
+  if (g.length < 4) return null;
+  const lon = (g.charCodeAt(0) - 65) * 20 - 180 + (g.charCodeAt(2) - 48) * 2;
+  const lat = (g.charCodeAt(1) - 65) * 10 - 90  + (g.charCodeAt(3) - 48) * 1;
+  let lonOff = 1, latOff = 0.5;
+  if (g.length >= 6) {
+    lonOff = (g.charCodeAt(4) - 65) * (5/60) + (2.5/60);
+    latOff = (g.charCodeAt(5) - 65) * (2.5/60) + (1.25/60);
+  }
+  return { lat: lat + latOff, lon: lon + lonOff };
+}
+
+function calcElevation(obsLat, obsLon, issLat, issLon, issAltKm) {
+  const R    = 6371;
+  const rad  = d => d * Math.PI / 180;
+  const dlat = rad(issLat - obsLat);
+  const dlon = rad(issLon - obsLon);
+  const a    = Math.sin(dlat/2)**2 + Math.cos(rad(obsLat)) * Math.cos(rad(issLat)) * Math.sin(dlon/2)**2;
+  const c    = 2 * Math.asin(Math.sqrt(a));
+  return Math.atan2(Math.cos(c) - R / (R + issAltKm), Math.sin(c)) * 180 / Math.PI;
+}
+
+function calcAzimuth(obsLat, obsLon, issLat, issLon) {
+  const rad  = d => d * Math.PI / 180;
+  const dLon = rad(issLon - obsLon);
+  const y    = Math.sin(dLon) * Math.cos(rad(issLat));
+  const x    = Math.cos(rad(obsLat)) * Math.sin(rad(issLat))
+             - Math.sin(rad(obsLat)) * Math.cos(rad(issLat)) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+}
+
+function azToCompass(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+async function fetchISSPosition() {
+  try {
+    const res  = await fetch('https://api.wheretheiss.at/v1/satellites/25544',
+                             { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    return { lat: data.latitude, lon: data.longitude, alt: data.altitude };
+  } catch { return null; }
+}
+
+async function checkISS() {
+  if (issObsLat === null) return;
+  const pos = await fetchISSPosition();
+  if (!pos) { issTimer = setTimeout(checkISS, 60_000); return; }
+
+  const elev = calcElevation(issObsLat, issObsLon, pos.lat, pos.lon, pos.alt);
+  const az   = calcAzimuth(issObsLat, issObsLon, pos.lat, pos.lon);
+  const comp = azToCompass(az);
+
+  if (elev > -5 && elev <= 0 && !issInPass) {
+    // Heads-up — ISS approaching horizon
+    bgPrint(
+      `${C.magenta}[ISS]${C.reset} Heads up — ISS approaching the horizon` +
+      ` · Elevation ${elev.toFixed(1)}°  Azimuth ${az.toFixed(0)}° (${comp})` +
+      `\n       145.825 MHz APRS  |  145.800 MHz Voice (NA1SS)`
+    );
+  } else if (elev > 0 && !issInPass) {
+    // AOS
+    issInPass  = true;
+    issMaxElev = elev;
+    bgPrint(
+      `${C.magenta}${C.bold}[ISS AOS]${C.reset} ISS above the horizon!` +
+      ` · Elevation ${elev.toFixed(1)}°  Azimuth ${az.toFixed(0)}° (${comp})` +
+      `\n         145.825 MHz APRS  |  145.800 MHz Voice (NA1SS)`
+    );
+  } else if (elev > 0 && issInPass) {
+    if (elev > issMaxElev) issMaxElev = elev;
+  } else if (elev <= 0 && issInPass) {
+    // LOS
+    issInPass = false;
+    bgPrint(
+      `${C.magenta}[ISS LOS]${C.reset} ISS below the horizon.` +
+      `  Max elevation this pass: ${issMaxElev.toFixed(1)}°`
+    );
+    issMaxElev = -90;
+  }
+
+  // Poll faster when the ISS is close
+  const interval = issInPass ? 10_000 : elev > -10 ? 20_000 : 60_000;
+  setTimeout(checkISS, interval);
+}
+
+function startISSTracking(grid) {
+  const pos = gridToLatLon(grid);
+  if (!pos) {
+    bgPrint(`${C.yellow}[ISS]${C.reset} Could not parse grid "${grid}" — ISS tracking disabled.`);
+    return;
+  }
+  issObsLat = pos.lat;
+  issObsLon = pos.lon;
+  checkISS();
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 async function main() {
   console.clear();
   console.log(
     `${C.green}${C.bold}` +
     `╔══════════════════════════════════════════════╗\n` +
-    `║          RADIO CLAUDE  v2.7                  ║\n` +
+    `║          RADIO CLAUDE  v2.8                  ║\n` +
     `║      DX Monitor + AI Assistant               ║\n` +
     `╚══════════════════════════════════════════════╝` +
     `${C.reset}\n`
@@ -629,7 +751,7 @@ async function main() {
     console.log(
       `${C.green}${C.bold}` +
       `╔══════════════════════════════════════════════╗\n` +
-      `║          RADIO CLAUDE  v2.7                  ║\n` +
+      `║          RADIO CLAUDE  v2.8                  ║\n` +
       `║      DX Monitor + AI Assistant               ║\n` +
       `╚══════════════════════════════════════════════╝` +
       `${C.reset}\n`
@@ -688,7 +810,7 @@ Your personality: knowledgeable, enthusiastic about amateur radio, concise at th
 
 When reporting DX spots:
 - Lead with callsign and country/entity
-- Say which band and whether it's likely workable from ${MY_GRID} right now
+- Say which band and whether it's likely workable from your location right now
 - For WATCHLIST callsigns say "** WATCHLIST ALERT **" first
 - Estimate rough bearing/distance from the operator's grid where useful
 - Keep it to 2-4 lines
@@ -707,6 +829,7 @@ ACRONYMS — always explain any abbreviations or acronyms in spot comments that 
   console.log(`${C.grey}Callsign: ${MY_CALL}  Grid: ${MY_GRID}  Model: ${MODEL}  |  Type 'help' for commands  |  Ctrl+C to exit${C.reset}\n`);
 
   fetchSolarData().then(s => s && bgPrint(`${C.cyan}[Solar]${C.reset} SFI=${s.sfi} A=${s.aindex} K=${s.kindex} — ${s.bands}`));
+  startISSTracking(MY_GRID);
   connectCluster();
 
   rl = readline.createInterface({
