@@ -5,14 +5,78 @@ const net      = require('net');
 const readline = require('readline');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const fs     = require('fs');
-const path   = require('path');
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const fs   = require('fs');
+const path = require('path');
+
+// ─── Base directory (next to .exe when packaged, __dirname otherwise) ─────────
+const isPkg   = typeof process.pkg !== 'undefined';
+const BASE_DIR = isPkg ? path.dirname(process.execPath) : __dirname;
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+const CONFIG_FILE    = path.join(BASE_DIR, 'config.json');
+const KNOWLEDGE_FILE = path.join(BASE_DIR, 'knowledge.txt');
+
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
+  catch { return null; }
+}
+
+function saveConfig(cfg) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+async function promptSetup() {
+  const tmpRl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask   = q => new Promise(res => tmpRl.question(q, ans => res(ans.trim())));
+
+  // Muted ask for the API key — suppress echoed characters
+  const askMuted = q => new Promise(res => {
+    process.stdout.write(q);
+    let val = '';
+    const onData = ch => {
+      if (ch === '\r' || ch === '\n') {
+        process.stdin.setRawMode(false);
+        process.stdin.removeListener('data', onData);
+        process.stdout.write('\n');
+        res(val.trim());
+      } else if (ch === '\u0003') {
+        process.exit();
+      } else if (ch === '\u007f') {
+        if (val.length) { val = val.slice(0, -1); process.stdout.write('\b \b'); }
+      } else {
+        val += ch;
+        process.stdout.write('*');
+      }
+    };
+    tmpRl.pause();
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', onData);
+  });
+
+  console.log(`\n${C.cyan}${C.bold}First-run setup${C.reset}`);
+  console.log(`${C.grey}Your answers are saved to config.json next to this program.${C.reset}\n`);
+
+  const callsign = (await ask(`  Your callsign  (e.g. 2D0PEY) : `)).toUpperCase();
+  const grid     = (await ask(`  Grid square    (e.g. IO74RE)  : `)).toUpperCase();
+  const apiKey   = await askMuted(`  Anthropic API key            : `);
+
+  tmpRl.close();
+
+  if (!callsign || !grid || !apiKey) {
+    console.log(`\n${C.red}All fields are required. Please try again.${C.reset}\n`);
+    return promptSetup();
+  }
+
+  const cfg = { callsign, grid, apiKey };
+  saveConfig(cfg);
+  console.log(`\n${C.green}Config saved to ${CONFIG_FILE}${C.reset}`);
+  console.log(`${C.grey}Delete config.json to re-run setup.${C.reset}\n`);
+  return cfg;
+}
 
 // ─── Persistent knowledge base ────────────────────────────────────────────────
-const isPkg = typeof process.pkg !== 'undefined';
-const KNOWLEDGE_FILE = path.join(isPkg ? path.dirname(process.execPath) : __dirname, 'knowledge.txt');
-
 function loadKnowledge() {
   try {
     return fs.readFileSync(KNOWLEDGE_FILE, 'utf8')
@@ -29,26 +93,19 @@ function appendKnowledge(fact) {
   return true;
 }
 
-// ─── Station & model config ───────────────────────────────────────────────────
-const MY_CALL  = '2D0PEY';
-const MY_GRID  = 'IO74RE';
-const MODEL    = 'claude-haiku-4-5';   // fast + cheap for continuous monitoring
+// ─── Model ────────────────────────────────────────────────────────────────────
+const MODEL = 'claude-haiku-4-5';   // fast + cheap for continuous monitoring
 
-const STATION_INFO = `
-Callsign : 2D0PEY  (Intermediate licence, Isle of Man, 100W max)
-Grid     : IO74RE  (54.2°N 4.6°W)
-HF rig   : Icom IC-7300
-VHF rig  : Icom IC-9700 (2m / 70cm / 23cm)
-HF ant   : Hustler 6-BTV vertical — 10 / 15 / 20 / 30 / 40 / 75m
-           ~36 buried radials (non-resonant ground screen)
-VHF ant  : PowAbeam 8el 2m Yagi + PowAbeam 15el 70cm Yagi
-Modes    : All modes — SSB, CW, FT8, FT4, RTTY. Does NOT exclusively run FT8/FT4.
-`.trim();
+// ─── Runtime state (populated after config loads) ─────────────────────────────
+let MY_CALL;
+let MY_GRID;
+let client;
+let SYSTEM;
 
 // Watchlist — always alert loudly
-const watchlist = new Set(['VY0ERC']);
+const watchlist = new Set();
 
-// Cluster nodes to try in order — all seen announcing on DXWatch
+// ─── Cluster nodes ────────────────────────────────────────────────────────────
 const CLUSTERS = [
   { host: '81.174.245.245',      port: 9000 },  // GB7HTL (UK) alt port
   { host: '81.174.245.245',      port: 7300 },  // GB7HTL (UK)
@@ -61,10 +118,10 @@ const CLUSTERS = [
 ];
 let clusterIdx = 0;
 
-// Bands Hustler 6-BTV covers (plus 17/12 via radiating element)
+// ─── Band plan ────────────────────────────────────────────────────────────────
 const MY_BANDS = new Set(['160m','80m','40m','30m','20m','17m','15m','12m','10m','6m']);
 
-// DX-worthy prefixes (non-European, worth alerting on from IoM)
+// ─── DX-worthy prefixes ───────────────────────────────────────────────────────
 const DX_PATTERNS = [
   /^VK/, /^ZL/, /^JA?\d/, /^J[R-S]\d/,
   /^(K|W|N)\d/, /^[KWN][A-Z]\d/, /^A[A-L]/,
@@ -103,7 +160,7 @@ function freqToBand(khz) {
   return null;
 }
 
-// Parse DX cluster spot line
+// ─── Spot parser ──────────────────────────────────────────────────────────────
 // DX de K4WSB:     7258.0  W1AW/4       VA                             2335Z 16 Mar
 function parseSpot(line) {
   const m = line.match(/^DX de\s+(\S+):\s+([\d.]+)\s+(\S+)\s*(.*?)\s+(\d{4}Z)/i);
@@ -135,18 +192,13 @@ const C = {
 // ─── Terminal helpers ─────────────────────────────────────────────────────────
 let rl;
 
-// Print background content without stomping on user's current input line
 function bgPrint(text) {
-  process.stdout.write('\r\x1b[K');   // clear current input line
+  process.stdout.write('\r\x1b[K');
   process.stdout.write(text + '\n');
-  if (rl) rl.prompt(true);            // reprint prompt + current input buffer
+  if (rl) rl.prompt(true);
 }
 
-function timestamp() {
-  return new Date().toISOString().slice(11, 19) + 'Z';
-}
-
-// ─── Solar / propagation data (hamqsl.com) ───────────────────────────────────
+// ─── Solar / propagation data ─────────────────────────────────────────────────
 let solarCache     = null;
 let solarCacheTime = 0;
 const SOLAR_TTL_MS = 15 * 60_000;
@@ -178,8 +230,8 @@ function formatSolar(s) {
 const PROP_KEYWORDS = /\b(prop|propagat|band|open|path|workable|skip|muf|sfi|solar|k.?index|aurora|condition|signal|noise|ionos)\b/i;
 
 // ─── Rolling spot buffer (ALL spots, last 60 min) ────────────────────────────
-const rawSpotBuffer  = [];
-const BUFFER_MAX_MS  = 60 * 60_000;
+const rawSpotBuffer = [];
+const BUFFER_MAX_MS = 60 * 60_000;
 
 function addToBuffer(spot) {
   rawSpotBuffer.push({ ...spot, ts: Date.now() });
@@ -200,16 +252,14 @@ function formatSpotsForClaude(spots) {
   }).join('\n');
 }
 
-// Detect if the user is asking about spots/activity and extract a time window
 function extractSpotQuery(input) {
   const l = input.toLowerCase();
   const spotsKeywords = /\b(spot|spots|spotted|activity|active|bands?|what'?s on|what is on|recent|show me|dx|cluster|heard|decoded|frequency|freq)\b/;
   if (!spotsKeywords.test(l)) return null;
   const minMatch = l.match(/(\d+)\s*min/);
-  return minMatch ? parseInt(minMatch[1]) : 15;  // default 15 min window
+  return minMatch ? parseInt(minMatch[1]) : 15;
 }
 
-// Build the user message, injecting live data when relevant
 async function buildUserPrompt(input) {
   let prompt = input;
   const minutes = extractSpotQuery(input);
@@ -229,63 +279,6 @@ const history  = [];
 let   busy     = false;
 const spotQueue = [];
 
-const SYSTEM = `You are Radio Claude, the AI assistant sitting at the radio desk of ${MY_CALL}.
-
-OPERATOR KNOWLEDGE BASE (loaded from knowledge.txt — treat as ground truth):
-${loadKnowledge()}
-
-
-${STATION_INFO}
-
-Watchlist (shout loudly for these): ${[...watchlist].join(', ')}
-
-You are connected live to a DX cluster (telnet). All spots received this session are
-buffered and injected into your context automatically when the operator asks about them —
-look for the [LIVE CLUSTER DATA] block in the message. Use it to answer accurately.
-If no cluster data is present, say so rather than guessing.
-
-CALLSIGN IDENTIFICATION RULES — be precise, do not guess:
-- K/W/N + digit (K4X, W1AW, N5XX etc.)  → USA. This IS genuine DX from Isle of Man (~5,500 km). Do NOT call it domestic or low priority.
-- KA/KB/KC/KD/KE/KF/KG/KH/KI/KJ/KK/KM/KN/KO/KP/KR/KS/KT/KU/KV/KW/KX/KY/KZ + digit → USA. Also genuine DX from IO74RE.
-- AA-AL prefix → USA
-- KG4 (exactly, with no suffix or 2-letter suffix) → Guantanamo Bay (rare). KG4XX (3+ letter suffix) → USA.
-- KH6 → Hawaii. KH2 → Guam. KH0 → Mariana Is. KL7/AL → Alaska. KP4 → Puerto Rico. KP2 → USVI.
-- VE/VA/VO/VY → Canada (not rare). VY0 → Nunavut/Arctic (very rare).
-- G/M/2E/M0/G0 etc → England. GM/MM → Scotland. GW/MW → Wales. GI/MI → N.Ireland.
-- F + digit or letter → France. DL/DA-DK/DO → Germany. I + digit → Italy.
-- When in doubt about a callsign's country, say so rather than guessing wrongly.
-
-OTA ACTIVATIONS — when a spot comment contains POTA/SOTA/IOTA/WWFF/BOTA etc.:
-- Mention it's an activation and what the programme is (POTA=Parks, SOTA=Summits, IOTA=Islands, WWFF=Flora & Fauna, GOTA=Gateways, BOTA=Bunkers, LOTA=Lighthouses, COTA=Castles etc.)
-- Include the reference number if present (e.g. US-1065)
-- These are often time-limited so flag as worth chasing promptly
-
-CLUSTER COMMENT ABBREVIATIONS:
-- "FT2" in a spot comment = FT4 (some cluster software abbreviates it)
-- "FT8", "SSB", "CW", "RTTY", "PSK" are as written
-- Frequency suffixes like "df 1234" = audio offset in Hz on the waterfall
-
-Your personality: knowledgeable, enthusiastic about amateur radio, concise at the desk.
-You know this operator well — Isle of Man location, intermediate licence, operates all modes (SSB, CW, FT8, FT4). Do NOT assume they only use digital modes.
-
-When reporting DX spots:
-- Lead with callsign and country/entity
-- Say which band and whether it's likely workable from IO74RE right now
-- For WATCHLIST callsigns say "** WATCHLIST ALERT **" first
-- Estimate rough bearing/distance from Isle of Man where useful
-- Keep it to 2-4 lines
-
-When the operator chats with you:
-- Be conversational and helpful
-- Reference the current session (spots seen, bands active, etc.) where relevant
-- Use proper ham radio terminology
-- Keep answers concise unless detail is asked for
-
-ACRONYMS — always explain any abbreviations or acronyms in spot comments that the operator might not know:
-- In spot commentary, if the comment contains abbreviations (WAS, ATNO, QRP, QRO, QSB, QRN, QRM, NCDXF, IOTA, POTA etc.) briefly explain what they mean in brackets
-- Examples: "WAS (Worked All States)", "QRP (low power, under 5W)", "ATNO (All Time New One — first ever contact with that entity)", "QSB (signal fading)", "QRN (static/noise)", "QRM (interference)"
-- Don't explain obvious ones like FT8, SSB, CW unless asked`;
-
 async function askClaude(content, isSpot = false) {
   if (busy && isSpot) { spotQueue.push(content); return; }
 
@@ -293,7 +286,6 @@ async function askClaude(content, isSpot = false) {
   history.push({ role: 'user', content });
 
   try {
-    bgPrint(`\n${C.yellow}[Radio Claude]${C.reset} `);
     process.stdout.write('\r\x1b[K');
     process.stdout.write(`${C.yellow}[Radio Claude]${C.reset} `);
 
@@ -323,17 +315,16 @@ async function askClaude(content, isSpot = false) {
 }
 
 // ─── Spot handler ─────────────────────────────────────────────────────────────
-const seenSpots = new Map();  // dx+band → last time seen (ms), to debounce dupes
+const seenSpots = new Map();
 
 async function handleSpot(spot) {
   if (!spot) return;
-  if (spot.band && !MY_BANDS.has(spot.band)) return;   // not a band I can use
+  if (spot.band && !MY_BANDS.has(spot.band)) return;
 
   const kind = isDX(spot.dx);
   if (!kind) return;
 
-  // Debounce: skip if same dx+band spotted within last 10 minutes
-  const key = `${spot.dx}|${spot.band}`;
+  const key  = `${spot.dx}|${spot.band}`;
   const last = seenSpots.get(key) || 0;
   if (Date.now() - last < 600_000) return;
   seenSpots.set(key, Date.now());
@@ -355,14 +346,14 @@ async function handleSpot(spot) {
     (spot.comment ? `\n           ${C.grey}${spot.comment}${C.reset}` : '')
   );
 
-  const mode  = spot.comment.match(/\b(FT8|FT4|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
-  const solar = await fetchSolarData();
+  const mode    = spot.comment.match(/\b(FT8|FT4|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
+  const solar   = await fetchSolarData();
   const otaNote = isOTA ? ` This is a ${otaMatch[1].toUpperCase()} activation${otaRef ? ' (' + otaRef[1] + ')' : ''} — flag as time-limited.` : '';
-  const prompt =
+  const prompt  =
     `NEW DX SPOT — ${spot.dx} on ${bandStr}${mode ? ' ' + mode : ''}, spotted by ${spot.spotter}. ` +
     `Comment: "${spot.comment || 'none'}". Time: ${spot.time}.${otaNote}\n` +
     `[LIVE SOLAR DATA]\n${formatSolar(solar)}\n` +
-    `Is this workable from IO74RE right now? Reference the solar data. Brief (2-3 lines).`;
+    `Is this workable from ${MY_GRID} right now? Reference the solar data. Brief (2-3 lines).`;
 
   askClaude(prompt, true);
 }
@@ -382,7 +373,6 @@ function connectCluster() {
 
   socket.connect(node.port, node.host, () => {
     bgPrint(`${C.blue}[Cluster]${C.reset} Connected to ${node.host}`);
-    // Send callsign after 1.5s — works regardless of what the cluster says first
     setTimeout(() => {
       if (!loggedIn && socket && !socket.destroyed) {
         socket.write(MY_CALL + '\r\n');
@@ -396,27 +386,18 @@ function connectCluster() {
     rxBuf += data;
     const lines = rxBuf.split(/\r?\n/);
     rxBuf = lines.pop();
-
     for (const line of lines) {
       const t = line.trim();
-      if (!t) continue;
-
-      // Skip cluster chatter before login
-      if (!loggedIn) continue;
-
-      // DX spot
+      if (!t || !loggedIn) continue;
       if (/^DX de /i.test(t)) {
         const spot = parseSpot(t);
-        if (spot) addToBuffer(spot);   // buffer ALL spots for context
-        handleSpot(spot);              // alert only on DX-worthy ones
+        if (spot) addToBuffer(spot);
+        handleSpot(spot);
       }
     }
   });
 
-  socket.on('timeout', () => {
-    // Send a harmless command to keep alive
-    socket.write('SH/DX 1\r\n');
-  });
+  socket.on('timeout', () => { socket.write('SH/DX 1\r\n'); });
 
   socket.on('close', () => {
     loggedIn = false;
@@ -458,6 +439,7 @@ function handleCommand(input) {
                        : 'connected (awaiting login)';
     bgPrint(
       `${C.cyan}[Status]${C.reset}\n` +
+      `  Callsign: ${MY_CALL}  Grid: ${MY_GRID}\n` +
       `  Cluster : ${clusterState} (${CLUSTERS[clusterIdx % CLUSTERS.length].host})\n` +
       `  Buffer  : ${rawSpotBuffer.length} spots stored\n` +
       `  DX seen : ${seenSpots.size} unique DX this session\n` +
@@ -480,12 +462,9 @@ function handleCommand(input) {
     return true;
   }
   if (cmd === 'spot') {
-    // spot <callsign> <freq-kHz> [comment...]
-    // e.g. spot VY0ERC 14074 FT8 weak but decoding
-    // Strip filler words so "spot PY2GZ on 14074 FT8" works too
     const spotParts = parts.slice(1).filter(p => !/^(on|at|freq|frequency)$/i.test(p));
     if (spotParts.length < 2) {
-      bgPrint(`${C.yellow}[Spot]${C.reset} Usage: spot <callsign> <freq-kHz> [comment]\n  e.g.  spot VY0ERC 14074 FT8 heard weak IO74RE`);
+      bgPrint(`${C.yellow}[Spot]${C.reset} Usage: spot <callsign> <freq-kHz> [comment]\n  e.g.  spot VY0ERC 14074 FT8 heard weak ${MY_GRID}`);
       return true;
     }
     const dxCall  = spotParts[0].toUpperCase();
@@ -499,8 +478,7 @@ function handleCommand(input) {
       bgPrint(`${C.red}[Spot]${C.reset} Not connected to cluster.`);
       return true;
     }
-    const cmd_str = `DX ${freq.toFixed(1)} ${dxCall} ${comment}\r\n`;
-    socket.write(cmd_str);
+    socket.write(`DX ${freq.toFixed(1)} ${dxCall} ${comment}\r\n`);
     bgPrint(`${C.green}[Spot sent]${C.reset} ${C.bold}${dxCall}${C.reset} on ${freq} kHz — "${comment}"`);
     return true;
   }
@@ -541,18 +519,96 @@ function handleCommand(input) {
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
-function main() {
+async function main() {
   console.clear();
   console.log(
     `${C.green}${C.bold}` +
     `╔══════════════════════════════════════════════╗\n` +
-    `║          RADIO CLAUDE  v2.4                  ║\n` +
-    `║   DX Monitor + AI Assistant for 2D0PEY       ║\n` +
-    `║          Isle of Man  ·  IO74RE               ║\n` +
+    `║          RADIO CLAUDE  v2.5                  ║\n` +
+    `║      DX Monitor + AI Assistant               ║\n` +
     `╚══════════════════════════════════════════════╝` +
     `${C.reset}\n`
   );
-  console.log(`${C.grey}Model: ${MODEL}  |  Type 'help' for commands  |  Ctrl+C to exit${C.reset}\n`);
+
+  // ── Load or create config ──
+  let cfg = loadConfig();
+  if (!cfg || !cfg.callsign || !cfg.apiKey) {
+    cfg = await promptSetup();
+    console.clear();
+    console.log(
+      `${C.green}${C.bold}` +
+      `╔══════════════════════════════════════════════╗\n` +
+      `║          RADIO CLAUDE  v2.5                  ║\n` +
+      `║      DX Monitor + AI Assistant               ║\n` +
+      `╚══════════════════════════════════════════════╝` +
+      `${C.reset}\n`
+    );
+  }
+
+  MY_CALL = cfg.callsign;
+  MY_GRID = cfg.grid || 'unknown';
+  client  = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || cfg.apiKey });
+
+  // Default watchlist entry for 2D0PEY — won't appear for other callsigns
+  if (MY_CALL === '2D0PEY') watchlist.add('VY0ERC');
+
+  SYSTEM = `You are Radio Claude, the AI assistant sitting at the radio desk of ${MY_CALL}.
+
+OPERATOR KNOWLEDGE BASE (loaded from knowledge.txt — treat as ground truth):
+${loadKnowledge()}
+
+Callsign : ${MY_CALL}
+Grid     : ${MY_GRID}
+
+Watchlist (shout loudly for these): ${[...watchlist].join(', ') || '(none)'}
+
+You are connected live to a DX cluster (telnet). All spots received this session are
+buffered and injected into your context automatically when the operator asks about them —
+look for the [LIVE CLUSTER DATA] block in the message. Use it to answer accurately.
+If no cluster data is present, say so rather than guessing.
+
+CALLSIGN IDENTIFICATION RULES — be precise, do not guess:
+- K/W/N + digit (K4X, W1AW, N5XX etc.)  → USA. Genuine DX from most of Europe.
+- KA/KB/KC/KD/KE/KF/KG/KH/KI/KJ/KK/KM/KN/KO/KP/KR/KS/KT/KU/KV/KW/KX/KY/KZ + digit → USA.
+- AA-AL prefix → USA
+- KG4 (exactly, with no suffix or 2-letter suffix) → Guantanamo Bay (rare). KG4XX (3+ letter suffix) → USA.
+- KH6 → Hawaii. KH2 → Guam. KH0 → Mariana Is. KL7/AL → Alaska. KP4 → Puerto Rico. KP2 → USVI.
+- VE/VA/VO/VY → Canada (not rare). VY0 → Nunavut/Arctic (very rare).
+- G/M/2E/M0/G0 etc → England. GM/MM → Scotland. GW/MW → Wales. GI/MI → N.Ireland.
+- F + digit or letter → France. DL/DA-DK/DO → Germany. I + digit → Italy.
+- When in doubt about a callsign's country, say so rather than guessing wrongly.
+
+OTA ACTIVATIONS — when a spot comment contains POTA/SOTA/IOTA/WWFF/BOTA etc.:
+- Mention it's an activation and what the programme is (POTA=Parks, SOTA=Summits, IOTA=Islands, WWFF=Flora & Fauna, GOTA=Gateways, BOTA=Bunkers, LOTA=Lighthouses, COTA=Castles etc.)
+- Include the reference number if present (e.g. US-1065)
+- These are often time-limited so flag as worth chasing promptly
+
+CLUSTER COMMENT ABBREVIATIONS:
+- "FT2" in a spot comment = FT4 (some cluster software abbreviates it)
+- "FT8", "SSB", "CW", "RTTY", "PSK" are as written
+- Frequency suffixes like "df 1234" = audio offset in Hz on the waterfall
+
+Your personality: knowledgeable, enthusiastic about amateur radio, concise at the desk.
+
+When reporting DX spots:
+- Lead with callsign and country/entity
+- Say which band and whether it's likely workable from ${MY_GRID} right now
+- For WATCHLIST callsigns say "** WATCHLIST ALERT **" first
+- Estimate rough bearing/distance from the operator's grid where useful
+- Keep it to 2-4 lines
+
+When the operator chats with you:
+- Be conversational and helpful
+- Reference the current session (spots seen, bands active, etc.) where relevant
+- Use proper ham radio terminology
+- Keep answers concise unless detail is asked for
+
+ACRONYMS — always explain any abbreviations or acronyms in spot comments that the operator might not know:
+- In spot commentary, if the comment contains abbreviations (WAS, ATNO, QRP, QRO, QSB, QRN, QRM, NCDXF, IOTA, POTA etc.) briefly explain what they mean in brackets
+- Examples: "WAS (Worked All States)", "QRP (low power, under 5W)", "ATNO (All Time New One — first ever contact with that entity)", "QSB (signal fading)", "QRN (static/noise)", "QRM (interference)"
+- Don't explain obvious ones like FT8, SSB, CW unless asked`;
+
+  console.log(`${C.grey}Callsign: ${MY_CALL}  Grid: ${MY_GRID}  Model: ${MODEL}  |  Type 'help' for commands  |  Ctrl+C to exit${C.reset}\n`);
 
   fetchSolarData().then(s => s && bgPrint(`${C.cyan}[Solar]${C.reset} SFI=${s.sfi} A=${s.aindex} K=${s.kindex} — ${s.bands}`));
   connectCluster();
@@ -560,7 +616,7 @@ function main() {
   rl = readline.createInterface({
     input    : process.stdin,
     output   : process.stdout,
-    prompt   : `${C.cyan}2D0PEY>${C.reset} `,
+    prompt   : `${C.cyan}${MY_CALL}>${C.reset} `,
     terminal : true,
   });
 
