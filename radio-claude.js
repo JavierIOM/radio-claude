@@ -297,7 +297,7 @@ async function askClaude(content, isSpot = false) {
   let dots = 0;
   const spinner = setInterval(() => {
     dots = (dots % 3) + 1;
-    process.stdout.write(`\r\x1b[K${C.yellow}[Radio Claude]${C.reset} thinking${'.'.repeat(dots)}`);
+    process.stdout.write(`\r\x1b[K${C.yellow}[Radio Claude]${C.reset} listening${'.'.repeat(dots)}`);
   }, 400);
 
   try {
