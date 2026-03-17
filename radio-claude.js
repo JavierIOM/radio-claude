@@ -10,7 +10,8 @@ const path   = require('path');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── Persistent knowledge base ────────────────────────────────────────────────
-const KNOWLEDGE_FILE = path.join(__dirname, 'knowledge.txt');
+const isPkg = typeof process.pkg !== 'undefined';
+const KNOWLEDGE_FILE = path.join(isPkg ? path.dirname(process.execPath) : __dirname, 'knowledge.txt');
 
 function loadKnowledge() {
   try {

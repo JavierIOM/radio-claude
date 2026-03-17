@@ -3,11 +3,22 @@
   "version": "1.0.0",
   "description": "DX cluster monitor with AI commentary for 2D0PEY",
   "main": "radio-claude.js",
+  "bin": "radio-claude.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node radio-claude.js"
+    "start": "node radio-claude.js",
+    "build": "pkg . --compress GZip"
+  },
+  "pkg": {
+    "scripts": "radio-claude.js",
+    "assets": "knowledge.txt",
+    "targets": ["node20-win-x64"],
+    "outputPath": "dist"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.1"
   }
 }
