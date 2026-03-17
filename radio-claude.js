@@ -539,7 +539,7 @@ async function main() {
   console.log(
     `${C.green}${C.bold}` +
     `╔══════════════════════════════════════════════╗\n` +
-    `║          RADIO CLAUDE  v2.5                  ║\n` +
+    `║          RADIO CLAUDE  v2.6                  ║\n` +
     `║      DX Monitor + AI Assistant               ║\n` +
     `╚══════════════════════════════════════════════╝` +
     `${C.reset}\n`
@@ -553,7 +553,7 @@ async function main() {
     console.log(
       `${C.green}${C.bold}` +
       `╔══════════════════════════════════════════════╗\n` +
-      `║          RADIO CLAUDE  v2.5                  ║\n` +
+      `║          RADIO CLAUDE  v2.6                  ║\n` +
       `║      DX Monitor + AI Assistant               ║\n` +
       `╚══════════════════════════════════════════════╝` +
       `${C.reset}\n`
