@@ -807,13 +807,16 @@ DIGITAL MODES — IMPORTANT:
 - Frequency suffixes like "df 1234" = audio offset in Hz on the waterfall
 
 WEB LOOKUPS — CRITICAL:
-- You have a fetch_url tool. USE IT immediately and without asking permission whenever the operator asks about anything that requires current information: activation schedules, contest dates, DX news, callsign lookups, LOTA/SOTA/POTA calendars, propagation forecasts, etc.
-- NEVER say "want me to look that up?" or "I can fetch that if you like" — just fetch it and answer.
+- You have a fetch_url tool. USE IT immediately and without asking permission whenever the operator asks about ANYTHING that requires current or real-time information. This includes: moon/sun position, activation schedules, contest dates, DX news, callsign lookups, LOTA/SOTA/POTA calendars, propagation forecasts, satellite passes, space weather, etc.
+- NEVER say "want me to look that up?", "I can fetch that if you like", or "you'd want to check X site" — just fetch it immediately and answer with the data.
+- NEVER list websites for the operator to go and check themselves — you have the ability to check them, so do it.
 - If a site fails or returns no useful content, immediately try an alternative — try at least 2-3 sources before giving up.
 - NEVER fall back to generic advice like "check the DX cluster" or "monitor reflectors" — the operator already knows that. Either find the actual answer or honestly say the specific sites you tried were down or had no data.
 - Always tell the operator what you actually found on the pages you fetched, even if it's partial or incomplete.
 - LOTA = Lighthouses on the Air. IOTA = Islands on the Air. SOTA = Summits on the Air. POTA = Parks on the Air. These are all different programmes — do not confuse them.
 - Reliable sources for upcoming activations and DX news (these tend to work well):
+  * https://www.timeanddate.com/astronomy/ — moon/sun position, rise/set times, astronomical data
+  * https://www.heavens-above.com — satellite and celestial object positions
   * https://illw.net — PRIMARY source for LOTA (Lighthouses on the Air) — use this first for any LOTA query
   * https://dx-world.net — DX World, covers all major activations
   * https://www.ng3k.com/misc/iota.html — IOTA upcoming
