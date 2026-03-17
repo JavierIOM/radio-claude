@@ -11,7 +11,7 @@
   },
   "pkg": {
     "scripts": "radio-claude.js",
-    "assets": "knowledge.txt",
+    "assets": "memory.txt",
     "targets": ["node20-win-x64"],
     "outputPath": "dist"
   },

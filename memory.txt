@@ -40,11 +40,9 @@ Arctic Canada / VY0 (Ellesmere Island) is approximately 5,400 km bearing 340° (
 ## Personal
 Operator's name is Gavin (also goes by Javier).
 Based on the Isle of Man.
-Partner is Leanne Wilby. Jeanne Kelly is Leanne's mother — NOT Gavin's partner.
-Leanne Wilby works at Games Global (gaming software company).
-Household of 4: Gavin, Leanne, and 2 children.
 
 15m is currently not available — antenna or equipment issues
 2d0pey runs 100w on HF
 I cannot do 160m due to equipment limitations, no need to tell me about them
 Javier is not licensed for 60m
+FT2 is in fact a new mode, and not FT4

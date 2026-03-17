@@ -13,8 +13,8 @@ const isPkg   = typeof process.pkg !== 'undefined';
 const BASE_DIR = isPkg ? path.dirname(process.execPath) : __dirname;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const CONFIG_FILE    = path.join(BASE_DIR, 'config.json');
-const KNOWLEDGE_FILE = path.join(BASE_DIR, 'knowledge.txt');
+const CONFIG_FILE  = path.join(BASE_DIR, 'config.json');
+const MEMORY_FILE  = path.join(BASE_DIR, 'memory.txt');
 
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
@@ -77,20 +77,28 @@ async function promptSetup() {
 }
 
 // ─── Persistent knowledge base ────────────────────────────────────────────────
-function loadKnowledge() {
+function loadMemory() {
   try {
-    return fs.readFileSync(KNOWLEDGE_FILE, 'utf8')
+    return fs.readFileSync(MEMORY_FILE, 'utf8')
       .split('\n')
       .filter(l => l.trim() && !l.trim().startsWith('#'))
       .join('\n');
   } catch { return ''; }
 }
 
-function appendKnowledge(fact) {
+function appendMemory(fact) {
   const line = fact.trim();
   if (!line) return false;
-  fs.appendFileSync(KNOWLEDGE_FILE, '\n' + line);
+  fs.appendFileSync(MEMORY_FILE, '\n' + line);
   return true;
+}
+
+// Natural language memory triggers
+const MEMORY_TRIGGER = /\b(remember this|make sure you remember|remember that)\b/i;
+
+function extractMemoryFact(input) {
+  const m = input.match(/\b(?:remember this|make sure you remember|remember that)[:\s-]*(.*)/i);
+  return m ? m[1].trim() : null;
 }
 
 // ─── Model ────────────────────────────────────────────────────────────────────
@@ -484,9 +492,9 @@ function handleCommand(input) {
   }
   if (cmd === 'learn') {
     const fact = parts.slice(1).join(' ').trim();
-    if (!fact) { bgPrint(`${C.yellow}[Learn]${C.reset} Usage: learn <fact to remember>`); return true; }
-    if (appendKnowledge(fact)) {
-      bgPrint(`${C.green}[Learn]${C.reset} Got it: "${fact}"\n         (saved to knowledge.txt — active next restart)`);
+    if (!fact) { bgPrint(`${C.yellow}[Memory]${C.reset} Usage: learn <fact>  — or just say "remember this: <fact>"`); return true; }
+    if (appendMemory(fact)) {
+      bgPrint(`${C.green}[Memory]${C.reset} Saved: "${fact}"\n         (written to memory.txt — active next restart)`);
     }
     return true;
   }
@@ -508,7 +516,7 @@ function handleCommand(input) {
       `  sh/dx [n]      — show n recent spots from cluster\n` +
       `  status         — connection + session info\n` +
       `  spot <call> <kHz> [comment] — post a spot to the cluster\n` +
-      `  learn <fact>   — save a permanent fact to knowledge.txt\n` +
+      `  learn <fact>   — save a fact to memory.txt (or just say "remember this: ...")\n` +
       `  clear          — clear Radio Claude conversation history\n` +
       `  help           — show this\n` +
       `  Anything else  — chat with Radio Claude`
@@ -554,8 +562,8 @@ async function main() {
 
   SYSTEM = `You are Radio Claude, the AI assistant sitting at the radio desk of ${MY_CALL}.
 
-OPERATOR KNOWLEDGE BASE (loaded from knowledge.txt — treat as ground truth):
-${loadKnowledge()}
+OPERATOR MEMORY (loaded from memory.txt — treat as ground truth):
+${loadMemory()}
 
 Callsign : ${MY_CALL}
 Grid     : ${MY_GRID}
@@ -625,6 +633,16 @@ ACRONYMS — always explain any abbreviations or acronyms in spot comments that 
   rl.on('line', async line => {
     const input = line.trim();
     if (!input) { rl.prompt(); return; }
+
+    // Natural language memory triggers — save fact AND let Claude acknowledge
+    if (MEMORY_TRIGGER.test(input)) {
+      const fact = extractMemoryFact(input);
+      if (fact) {
+        appendMemory(fact);
+        bgPrint(`${C.green}[Memory]${C.reset} Saved: "${fact}"`);
+      }
+    }
+
     if (!handleCommand(input)) {
       askClaude(await buildUserPrompt(input));
     } else {
