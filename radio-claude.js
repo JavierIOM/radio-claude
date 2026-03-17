@@ -361,7 +361,8 @@ async function handleSpot(spot) {
     (spot.comment ? `\n           ${C.grey}${spot.comment}${C.reset}` : '')
   );
 
-  const mode    = spot.comment.match(/\b(FT8|FT4|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
+  const modeRaw = spot.comment.match(/\b(FT8|FT4|FT2|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
+  const mode    = modeRaw.toUpperCase() === 'FT2' ? 'FT4' : modeRaw;  // FT2 = FT4 (cluster shorthand)
   const solar   = await fetchSolarData();
   const otaNote = isOTA ? ` This is a ${otaMatch[1].toUpperCase()} activation${otaRef ? ' (' + otaRef[1] + ')' : ''} — flag as time-limited.` : '';
   const prompt  =
