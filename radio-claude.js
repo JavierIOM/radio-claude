@@ -361,8 +361,7 @@ async function handleSpot(spot) {
     (spot.comment ? `\n           ${C.grey}${spot.comment}${C.reset}` : '')
   );
 
-  const modeRaw = spot.comment.match(/\b(FT8|FT4|FT2|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
-  const mode    = modeRaw.toUpperCase() === 'FT2' ? 'FT4' : modeRaw;  // FT2 = FT4 (cluster shorthand)
+  const mode = spot.comment.match(/\b(FT8|FT4|FT2|SSB|CW|RTTY|PSK)\b/i)?.[1] || '';
   const solar   = await fetchSolarData();
   const otaNote = isOTA ? ` This is a ${otaMatch[1].toUpperCase()} activation${otaRef ? ' (' + otaRef[1] + ')' : ''} — flag as time-limited.` : '';
   const prompt  =
@@ -600,8 +599,8 @@ OTA ACTIVATIONS — when a spot comment contains POTA/SOTA/IOTA/WWFF/BOTA etc.:
 - These are often time-limited so flag as worth chasing promptly
 
 CLUSTER COMMENT ABBREVIATIONS:
-- "FT2" in a spot comment = FT4 (some cluster software abbreviates it)
-- "FT8", "SSB", "CW", "RTTY", "PSK" are as written
+- "FT8", "FT4", "FT2", "SSB", "CW", "RTTY", "PSK" are all legitimate modes — treat them as written
+- Frequency suffixes like "df 1234" = audio offset in Hz on the waterfall
 - Frequency suffixes like "df 1234" = audio offset in Hz on the waterfall
 
 Your personality: knowledgeable, enthusiastic about amateur radio, concise at the desk.
