@@ -282,6 +282,39 @@ async function buildUserPrompt(input) {
   return prompt;
 }
 
+// ─── Web fetch tool ───────────────────────────────────────────────────────────
+async function fetchUrl(url) {
+  try {
+    const res  = await fetch(url, {
+      signal  : AbortSignal.timeout(10000),
+      headers : { 'User-Agent': 'Mozilla/5.0 (radio-claude DX assistant)' },
+    });
+    const html = await res.text();
+    return html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 6000);
+  } catch (err) {
+    return `Error fetching ${url}: ${err.message}`;
+  }
+}
+
+const TOOLS = [
+  {
+    name        : 'fetch_url',
+    description : 'Fetch the content of a web page to look up current information — award schedules, activation calendars, DX news, contest dates, propagation forecasts, callsign lookups, etc. Use this whenever the operator asks something that requires up-to-date information you may not have.',
+    input_schema: {
+      type      : 'object',
+      properties: { url: { type: 'string', description: 'Full URL to fetch (include https://)' } },
+      required  : ['url'],
+    },
+  },
+];
+
 // ─── Claude conversation ──────────────────────────────────────────────────────
 const history  = [];
 let   busy     = false;
@@ -291,33 +324,76 @@ async function askClaude(content, isSpot = false) {
   if (busy && isSpot) { spotQueue.push(content); return; }
 
   busy = true;
-  history.push({ role: 'user', content });
 
-  // Animate a thinking indicator while waiting for the full response
+  // Build working message list — history + new user message
+  const messages = [...history, { role: 'user', content }];
+
+  let spinnerInterval = null;
   let dots = 0;
-  const spinner = setInterval(() => {
-    dots = (dots % 3) + 1;
-    process.stdout.write(`\r\x1b[K${C.yellow}[Radio Claude]${C.reset} listening${'.'.repeat(dots)}`);
-  }, 400);
+
+  function startSpinner(text) {
+    clearInterval(spinnerInterval);
+    dots = 0;
+    spinnerInterval = setInterval(() => {
+      dots = (dots % 3) + 1;
+      process.stdout.write(`\r\x1b[K${C.yellow}[Radio Claude]${C.reset} ${text}${'.'.repeat(dots)}`);
+    }, 400);
+  }
+
+  function stopSpinner() {
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
+    process.stdout.write('\r\x1b[K');
+  }
 
   try {
-    const msg = await client.messages.create({
-      model      : MODEL,
-      max_tokens : 400,
-      system     : SYSTEM,
-      messages   : history,
-    });
+    startSpinner('listening');
+    let reply = '';
 
-    const reply = msg.content[0]?.text ?? '';
+    // Tool-use loop — keeps going until Claude stops calling tools
+    while (true) {
+      const msg = await client.messages.create({
+        model      : MODEL,
+        max_tokens : 600,
+        system     : SYSTEM,
+        messages,
+        tools      : TOOLS,
+      });
+
+      if (msg.stop_reason === 'tool_use') {
+        messages.push({ role: 'assistant', content: msg.content });
+        const toolResults = [];
+
+        for (const block of msg.content) {
+          if (block.type !== 'tool_use') continue;
+          let hostname = block.input.url;
+          try { hostname = new URL(block.input.url).hostname; } catch {}
+          stopSpinner();
+          process.stdout.write(`\r\x1b[K${C.grey}[Radio Claude]${C.reset} looking up ${hostname}...\n`);
+          if (rl) rl.prompt(true);
+
+          const result = await fetchUrl(block.input.url);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
+        }
+
+        messages.push({ role: 'user', content: toolResults });
+        startSpinner('listening');
+
+      } else {
+        reply = msg.content.find(b => b.type === 'text')?.text ?? '';
+        break;
+      }
+    }
+
+    // Sync the full exchange into persistent history
+    history.push({ role: 'user', content });
     history.push({ role: 'assistant', content: reply });
 
-    clearInterval(spinner);
-    process.stdout.write('\r\x1b[K');   // clear thinking line
+    stopSpinner();
     bgPrint(`${C.yellow}[Radio Claude]${C.reset} ${reply}`);
 
   } catch (err) {
-    clearInterval(spinner);
-    process.stdout.write('\r\x1b[K');
+    stopSpinner();
     bgPrint(`${C.red}[Error]${C.reset} ${err.message}`);
   } finally {
     busy = false;
